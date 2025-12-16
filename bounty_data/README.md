@@ -1,4 +1,11 @@
 
+bounty solved! bounty recipient address: 
+0xE42c676D40457f044002072F2FD8C3648454E55e 
+
+he was able to detect the gap, next bounty with a search for a possible attack on 2 ciphertexts during division operation tomorrow at the same time. *to participate you will need to provide a full trace log of actions and how the result was obtained (full log will be published after review)*
+
+
+
 # mini-bounty challenge 
 we're launching a series of bounty programs with rewards in usdt, there will be a series of such challenges, and this is the first of them, your reward (if successful) is $6,666.6666 in usdt (erc20) equivalent at the following ethereum address: [`0x46a8523Db54D674dabE09CA0c2193D5648c98700`](https://etherscan.io/address/0x46a8523Db54D674dabE09CA0c2193D5648c98700)
 
