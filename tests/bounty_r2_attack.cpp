@@ -93,7 +93,7 @@ int main() {
                 
                 if (match) {
                     ++r2_leaks;
-                    std::cout << "LEAK ct[" << ct_idx << "] pair (" << i << "," << j << ")\n";
+                    std::cout << "ct[" << ct_idx << "] pair (" << i << "," << j << ")\n";
                 }
             }
         }
