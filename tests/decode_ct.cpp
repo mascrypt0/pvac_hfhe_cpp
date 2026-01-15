@@ -49,12 +49,21 @@ namespace ser {
         }
         return L;
     };
+    auto getEdge = [](std::istream& i) -> Edge {
+        Edge e{};
+        e.layer_id = get32(i);
+        i.read(reinterpret_cast<char*>(&e.idx), 2);
+        e.ch = i.get(); i.get();
+        e.w = getFp(i); e.s = getBv(i);
+        return e;
+    };
     auto getCipher = [](std::istream& i) -> Cipher {
         Cipher C;
         auto nL = get32(i), nE = get32(i);
-        C.L.resize(nL); C.E.resize(nE);
+        C.L.resize(nL);
+        C.E.resize(nE);
         for (auto& L : C.L) L = getLayer(i);
-        i.seekg(nE * (4 + 2 + 1 + 1 + 16 + 8), std::ios::cur); // Skip edges safe-way
+        for (auto& e : C.E) e = getEdge(i);
         return C;
     };
 }
@@ -77,47 +86,38 @@ int main(int argc, char** argv) {
     try {
         auto cts = loadCts(ct_path);
         uint32_t B = 337; 
-
-        std::cout << "--- BOUNTY V3: PRF-KEYSTREAM DECODING ---\n\n";
-
-        std::string result = "";
-
-        for (size_t i = 0; i < cts.size(); ++i) {
-            for (const auto& L : cts[i].L) {
+        
+        std::vector<uint32_t> m_values;
+        for (const auto& ct : cts) {
+            for (const auto& L : ct.L) {
                 if (L.rule == RRule::BASE) {
-                    // Gunakan ztag sebagai representasi m
-                    // Gunakan nonce sebagai mask
-                    uint64_t m = L.seed.ztag % B;
-                    
-                    // Kita coba beberapa kemungkinan kombinasi nonce
-                    // 1. (m ^ nonce_low_8bit)
-                    uint8_t key = (uint8_t)(L.seed.nonce.lo & 0xFF);
-                    uint32_t decoded = (uint32_t)(m ^ key) % B;
-
-                    if (decoded >= 32 && decoded <= 126) result += (char)decoded;
-                    else result += "?";
+                    m_values.push_back(L.seed.ztag % B);
                 }
             }
         }
 
-        std::cout << "Attempt 1 (Ztag % B ^ Nonce_Byte): " << result << "\n";
+        std::cout << "--- BOUNTY V3: XOR KEYSTREAM SCANNER ---\n";
+        std::cout << "Analyzed " << m_values.size() << " base parameters.\n\n";
 
-        // Attempt 2: Mencoba pergeseran (shift) dinamis
-        result = "";
-        for (size_t i = 0; i < cts.size(); ++i) {
-            for (const auto& L : cts[i].L) {
-                if (L.rule == RRule::BASE) {
-                    uint64_t m = L.seed.ztag % B;
-                    // Kadang nilai R adalah m - (index * konstanta)
-                    int32_t c = (int32_t)m - (int32_t)(i * 7); // 7 adalah step umum
-                    while (c < 0) c += B;
-                    c %= B;
-                    if (c >= 32 && c <= 126) result += (char)c;
-                    else result += "?";
+        for (int k = 0; k < 256; ++k) {
+            std::string attempt = "";
+            int score = 0;
+            for (uint32_t m : m_values) {
+                char c = (char)(m ^ k);
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ') {
+                    attempt += c;
+                    score++;
+                } else {
+                    attempt += '.';
                 }
             }
+            
+            // Tampilkan jika setidaknya 5 karakter terlihat valid
+            if (score >= 5) {
+                std::cout << "Key [" << std::setw(3) << k << "]: " << attempt << "\n";
+            }
         }
-        std::cout << "Attempt 2 (Linear Decay): " << result << "\n";
+        std::cout << "\n----------------------------------------\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
