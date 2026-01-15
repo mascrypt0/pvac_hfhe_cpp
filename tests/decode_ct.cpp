@@ -85,39 +85,42 @@ int main(int argc, char** argv) {
     
     try {
         auto cts = loadCts(ct_path);
-        uint32_t B = 337; 
-        
-        std::vector<uint32_t> m_values;
+        std::cout << "--- BOUNTY V3: EDGE-WEIGHT ANALYSIS ---\n";
+
+        std::vector<uint8_t> stream;
         for (const auto& ct : cts) {
-            for (const auto& L : ct.L) {
-                if (L.rule == RRule::BASE) {
-                    m_values.push_back(L.seed.ztag % B);
+            for (const auto& e : ct.E) {
+                // Mengambil koefisien 'lo' dari weight Fp
+                // Dalam Bounty V3, ini sering berisi delta atau pesan langsung
+                uint64_t w_val = e.w.lo;
+                if (w_val > 0) {
+                    for (int j = 0; j < 8; ++j) {
+                        uint8_t b = (uint8_t)((w_val >> (j * 8)) & 0xFF);
+                        if (b != 0) stream.push_back(b);
+                    }
                 }
             }
         }
 
-        std::cout << "--- BOUNTY V3: XOR KEYSTREAM SCANNER ---\n";
-        std::cout << "Analyzed " << m_values.size() << " base parameters.\n\n";
+        std::cout << "Extracted " << stream.size() << " bytes from edges.\n\n";
 
+        // Mencoba Brute XOR pada stream yang lebih besar ini
         for (int k = 0; k < 256; ++k) {
             std::string attempt = "";
-            int score = 0;
-            for (uint32_t m : m_values) {
-                char c = (char)(m ^ k);
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ') {
+            int valid = 0;
+            for (size_t i = 0; i < stream.size() && i < 100; ++i) { // Cek 100 byte pertama
+                char c = (char)(stream[i] ^ k);
+                if (c >= 32 && c <= 126) {
                     attempt += c;
-                    score++;
+                    valid++;
                 } else {
                     attempt += '.';
                 }
             }
-            
-            // Tampilkan jika setidaknya 5 karakter terlihat valid
-            if (score >= 5) {
+            if (valid > 40) { // Jika lebih dari 40% terbaca sebagai ASCII
                 std::cout << "Key [" << std::setw(3) << k << "]: " << attempt << "\n";
             }
         }
-        std::cout << "\n----------------------------------------\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
