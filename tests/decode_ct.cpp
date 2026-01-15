@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <iomanip>
+#include <iterator>
 
 int main(int argc, char** argv) {
     std::string dir = (argc > 1) ? argv[1] : "bounty3_data";
@@ -14,55 +15,60 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Baca seluruh file ke memori
-    std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::cout << "--- BOUNTY V3: RAW SCANNER (Memory Size: " << buffer.size() << " bytes) ---\n";
+    // Membaca file dengan cara yang lebih stabil
+    std::vector<uint8_t> buffer;
+    file.unsetf(std::ios::skipws);
+    buffer.insert(buffer.begin(), std::istream_iterator<uint8_t>(file), std::istream_iterator<uint8_t>());
 
-    // Teknik 1: Cari string ASCII yang terjepit di antara nol
-    std::cout << "Mencari string ASCII tersembunyi...\n";
+    if (buffer.empty()) {
+        std::cerr << "File kosong atau tidak terbaca." << std::endl;
+        return 1;
+    }
+
+    std::cout << "--- BOUNTY V3: RAW SCANNER (Size: " << buffer.size() << " bytes) ---\n";
+
+    // Teknik 1: Cari string ASCII murni
     std::string current = "";
     for (uint8_t b : buffer) {
         if (b >= 32 && b <= 126) {
             current += (char)b;
         } else {
-            if (current.length() >= 5) { // Hanya tampilkan jika minimal 5 karakter
-                std::cout << "[Ditemukan]: " << current << "\n";
+            if (current.length() >= 8) { 
+                std::cout << "[ASCII Found]: " << current << "\n";
             }
             current = "";
         }
     }
 
-    // Teknik 2: Brute Force XOR seluruh isi file
-    // Mnemonic sering di-XOR dengan kunci statis
-    std::cout << "\nScanning dengan Brute Force XOR (Mencari pola kata)...\n";
+    // Teknik 2: Brute Force XOR
     for (int k = 1; k < 256; ++k) {
         int word_hits = 0;
-        std::string line = "";
+        std::string temp_word = "";
         for (size_t i = 0; i < buffer.size(); ++i) {
             char c = (char)(buffer[i] ^ k);
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-                line += c;
-            } else if (c == ' ') {
-                if (line.length() >= 3) word_hits++;
-                line = "";
+                temp_word += c;
             } else {
-                line = "";
+                if (temp_word.length() >= 4) word_hits++;
+                temp_word = "";
             }
 
-            // Jika dalam blok kecil ditemukan banyak kata, tampilkan
-            if (word_hits >= 5) {
-                std::cout << "Kunci Potensial [" << k << "] ditemukan di offset " << i << "\n";
-                // Cetak area sekitar
-                for (size_t j = i - 50; j < i + 150 && j < buffer.size(); ++j) {
-                    char print_c = (char)(buffer[j] ^ k);
-                    std::cout << ((print_c >= 32 && print_c <= 126) ? print_c : '.');
+            // Jika pola kata bahasa Inggris terdeteksi (minimal 6 kata berdekatan)
+            if (word_hits >= 6) {
+                std::cout << "\n[!] Potential Mnemonic (XOR Key: " << k << ") at offset " << i << "\n";
+                size_t start = (i > 100) ? i - 100 : 0;
+                size_t end = (i + 200 < buffer.size()) ? i + 200 : buffer.size();
+                
+                for (size_t j = start; j < end; ++j) {
+                    char pc = (char)(buffer[j] ^ k);
+                    std::cout << ((pc >= 32 && pc <= 126) ? pc : '.');
                 }
-                std::cout << "\n\n";
-                break; 
+                std::cout << "\n";
+                word_hits = 0; // Reset agar tidak flooding
             }
         }
     }
 
-    std::cout << "------------------------------------------\n";
+    std::cout << "\n--- Scan Selesai ---\n";
     return 0;
 }
