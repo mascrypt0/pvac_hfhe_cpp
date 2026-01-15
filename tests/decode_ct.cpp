@@ -20,14 +20,10 @@ namespace Magic {
 
 namespace io {
     auto get32 = [](std::istream& i) -> uint32_t {
-        uint32_t x = 0;
-        i.read(reinterpret_cast<char*>(&x), 4);
-        return x;
+        uint32_t x = 0; i.read(reinterpret_cast<char*>(&x), 4); return x;
     };
     auto get64 = [](std::istream& i) -> uint64_t {
-        uint64_t x = 0;
-        i.read(reinterpret_cast<char*>(&x), 8);
-        return x;
+        uint64_t x = 0; i.read(reinterpret_cast<char*>(&x), 8); return x;
     };
     auto getBv = [](std::istream& i) -> BitVec {
         auto b = BitVec::make((int)get32(i));
@@ -49,8 +45,7 @@ namespace ser {
             L.seed.nonce.lo = get64(i);
             L.seed.nonce.hi = get64(i);
         } else if (L.rule == RRule::PROD) {
-            L.pa = get32(i);
-            L.pb = get32(i);
+            L.pa = get32(i); L.pb = get32(i);
         }
         return L;
     };
@@ -58,17 +53,14 @@ namespace ser {
         Edge e{};
         e.layer_id = get32(i);
         i.read(reinterpret_cast<char*>(&e.idx), 2);
-        e.ch = i.get();
-        i.get();
-        e.w = getFp(i);
-        e.s = getBv(i);
+        e.ch = i.get(); i.get();
+        e.w = getFp(i); e.s = getBv(i);
         return e;
     };
     auto getCipher = [](std::istream& i) -> Cipher {
         Cipher C;
         auto nL = get32(i), nE = get32(i);
-        C.L.resize(nL);
-        C.E.resize(nE);
+        C.L.resize(nL); C.E.resize(nE);
         for (auto& L : C.L) L = getLayer(i);
         for (auto& e : C.E) e = getEdge(i);
         return C;
@@ -88,7 +80,7 @@ auto loadCts = [](const std::string& path) -> std::vector<Cipher> {
 
 int main(int argc, char** argv) {
     std::string dir = (argc > 1) ? argv[1] : "bounty3_data";
-    std::cout << "--- BOUNTY V3: R-PARAMETER EXTRACTION ---\n";
+    std::cout << "--- BOUNTY V3: ADVANCED R-EXTRACTION (XOR MODE) ---\n";
 
     auto ct_path = dir + "/seed.ct";
     if (!fs::exists(ct_path)) {
@@ -100,29 +92,33 @@ int main(int argc, char** argv) {
         auto cts = loadCts(ct_path);
         std::cout << "Loaded " << cts.size() << " ciphertexts.\n\n";
 
-        std::string recovered_string = "";
+        std::string final_recovered = "";
 
         for (size_t i = 0; i < cts.size(); ++i) {
             std::cout << "CT[" << i << "]: ";
             for (const auto& L : cts[i].L) {
                 if (L.rule == RRule::BASE) {
-                    uint64_t r_val = L.seed.ztag;
-                    std::cout << "ztag=" << std::setw(18) << r_val << " (hex: " << std::hex << r_val << std::dec << ")";
+                    // Teknik Ekstraksi R: XOR antara ztag, nonce_lo, dan nonce_hi
+                    uint64_t R = L.seed.ztag ^ L.seed.nonce.lo ^ L.seed.nonce.hi;
                     
-                    // Kita coba asumsikan ztag menyimpan data ASCII (8 bytes per ztag)
-                    if (i > 0) { // Biasanya CT[0] adalah metadata/length
-                        for (int shift = 0; shift < 64; shift += 8) {
-                            char c = (char)((r_val >> shift) & 0xFF);
-                            if (c >= 32 && c <= 126) recovered_string += c;
+                    std::cout << "R=" << std::hex << std::setw(16) << std::setfill('0') << R << " ";
+
+                    // Convert hasil XOR ke ASCII bytes
+                    for (int j = 0; j < 8; ++j) {
+                        char c = (char)((R >> (j * 8)) & 0xFF);
+                        if (c >= 32 && c <= 126) {
+                            final_recovered += c;
+                        } else if (c != 0) {
+                            final_recovered += '?'; // Penanda karakter non-printable
                         }
                     }
                 }
             }
-            std::cout << "\n";
+            std::cout << std::dec << "\n";
         }
 
-        std::cout << "\n--- RECOVERED DATA FROM R (ZTAG) ---\n";
-        std::cout << recovered_string << "\n";
+        std::cout << "\n--- RECOVERED MNEMONIC / MESSAGE ---\n";
+        std::cout << final_recovered << "\n";
         std::cout << "------------------------------------\n";
 
     } catch (const std::exception& e) {
