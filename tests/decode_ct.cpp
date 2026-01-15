@@ -111,40 +111,45 @@ auto loadPk = [](const std::string& path) -> PubKey {
 
 int main(int argc, char** argv) {
     std::string dir = (argc > 1) ? argv[1] : "bounty3_data";
-    std::cout << "--- BOUNTY V3: MODULO EXTRACTION MODE ---\n";
-
     auto ct_path = dir + "/seed.ct";
     auto pk_path = dir + "/pk.bin";
 
     try {
         auto cts = loadCts(ct_path);
         auto pk = loadPk(pk_path);
+        uint32_t B = pk.prm.B;
+
+        std::cout << "--- BOUNTY V3: ADVANCED EXTRACTION ---\n";
         
-        std::cout << "Loaded " << cts.size() << " CTs. Parameter B = " << pk.prm.B << "\n\n";
+        std::string method1 = "";
+        std::string method2 = "";
 
-        std::vector<uint8_t> recovered_bytes;
+        for (size_t i = 0; i < cts.size(); ++i) {
+            for (const auto& L : cts[i].L) {
+                if (L.rule == RRule::BASE) {
+                    uint64_t m = L.seed.ztag % B;
+                    
+                    // Metode 1: Modulo murni (ASCII)
+                    method1 += (m >= 32 && m <= 126) ? (char)m : '.';
 
+                    // Metode 2: XOR antara m dengan B (Trik sering digunakan di Octra)
+                    uint64_t x = m ^ (B & 0xFF);
+                    method2 += (x >= 32 && x <= 126) ? (char)x : '.';
+                }
+            }
+        }
+
+        std::cout << "Method 1 (Modulo): " << method1 << "\n";
+        std::cout << "Method 2 (XOR B) : " << method2 << "\n";
+        
+        std::cout << "\nRaw M values (for Manual Look-up):\n";
         for (size_t i = 0; i < cts.size(); ++i) {
             std::cout << "CT[" << i << "]: ";
             for (const auto& L : cts[i].L) {
-                if (L.rule == RRule::BASE) {
-                    // Ekstraksi menggunakan Modulo B
-                    uint64_t m = L.seed.ztag % pk.prm.B;
-                    std::cout << "m=" << m << " ";
-                    if (m > 0 && m < 256) {
-                        recovered_bytes.push_back((uint8_t)m);
-                    }
-                }
+                if (L.rule == RRule::BASE) std::cout << (L.seed.ztag % B) << " ";
             }
             std::cout << "\n";
         }
-
-        std::cout << "\n--- RECOVERED MNEMONIC ---\n";
-        for (uint8_t b : recovered_bytes) {
-            if (b >= 32 && b <= 126) std::cout << (char)b;
-            else std::cout << " ";
-        }
-        std::cout << "\n--------------------------\n";
 
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
