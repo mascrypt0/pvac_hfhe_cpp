@@ -49,20 +49,12 @@ namespace ser {
         }
         return L;
     };
-    auto getEdge = [](std::istream& i) -> Edge {
-        Edge e{};
-        e.layer_id = get32(i);
-        i.read(reinterpret_cast<char*>(&e.idx), 2);
-        e.ch = i.get(); i.get();
-        e.w = getFp(i); e.s = getBv(i);
-        return e;
-    };
     auto getCipher = [](std::istream& i) -> Cipher {
         Cipher C;
         auto nL = get32(i), nE = get32(i);
         C.L.resize(nL); C.E.resize(nE);
         for (auto& L : C.L) L = getLayer(i);
-        for (auto& e : C.E) e = getEdge(i);
+        i.seekg(nE * (4 + 2 + 1 + 1 + 16 + 8), std::ios::cur); // Skip edges for speed
         return C;
     };
 }
@@ -78,49 +70,14 @@ auto loadCts = [](const std::string& path) -> std::vector<Cipher> {
     return cts;
 };
 
-auto loadPk = [](const std::string& path) -> PubKey {
-    std::ifstream i(path, std::ios::binary);
-    if (!i) throw std::runtime_error("cannot open " + path);
-    auto magic = io::get32(i);
-    auto ver = io::get32(i);
-    if (magic != Magic::PK || ver != Magic::VER) throw std::runtime_error("bad pk header");
-    PubKey pk;
-    pk.prm.m_bits = io::get32(i);
-    pk.prm.B = io::get32(i);
-    pk.prm.lpn_t = io::get32(i);
-    pk.prm.lpn_n = io::get32(i);
-    pk.prm.lpn_tau_num = io::get32(i);
-    pk.prm.lpn_tau_den = io::get32(i);
-    pk.prm.noise_entropy_bits = io::get32(i);
-    pk.prm.depth_slope_bits = io::get32(i);
-    pk.prm.tuple2_fraction = io::get64(i);
-    pk.prm.edge_budget = io::get32(i);
-    pk.canon_tag = io::get64(i);
-    i.read(reinterpret_cast<char*>(pk.H_digest.data()), 32);
-    pk.H.resize(io::get64(i));
-    for (auto& h : pk.H) h = io::getBv(i);
-    pk.ubk.perm.resize(io::get64(i));
-    for (auto& v : pk.ubk.perm) v = io::get32(i);
-    pk.ubk.inv.resize(io::get64(i));
-    for (auto& v : pk.ubk.inv) v = io::get32(i);
-    pk.omega_B = io::getFp(i);
-    pk.powg_B.resize(io::get64(i));
-    for (auto& f : pk.powg_B) f = io::getFp(i);
-    return pk;
-};
-
 int main(int argc, char** argv) {
     std::string dir = (argc > 1) ? argv[1] : "bounty3_data";
     auto ct_path = dir + "/seed.ct";
-    auto pk_path = dir + "/pk.bin";
-
+    
     try {
         auto cts = loadCts(ct_path);
-        auto pk = loadPk(pk_path);
-        uint32_t B = pk.prm.B;
+        uint32_t B = 337; // Parameter pk.B dari hasil sebelumnya
 
-        std::cout << "--- BOUNTY V3: PK-MATRIX BIT EXTRACTION ---\n";
-        
         std::vector<uint32_t> m_values;
         for (const auto& ct : cts) {
             for (const auto& L : ct.L) {
@@ -128,52 +85,35 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::vector<uint8_t> final_bytes;
-        uint8_t current_byte = 0;
-        int bit_count = 0;
+        std::cout << "--- BOUNTY V3: MODULO SHIFT BRUTEFORCE ---\n";
+        std::cout << "Target: Find a shift 's' where (m - s) % B is ASCII.\n\n";
 
-        for (uint32_t m : m_values) {
-            if (m < pk.H.size()) {
-                // Akses manual bit ke-0 dari BitVec baris ke-m
-                // BitVec biasanya menyimpan bit dalam array 'w' (uint64_t)
-                bool bit = (pk.H[m].w[0] & 1); 
-                
-                if (bit) current_byte |= (1 << bit_count);
-                
-                bit_count++;
-                if (bit_count == 8) {
-                    final_bytes.push_back(current_byte);
-                    current_byte = 0;
-                    bit_count = 0;
+        // Mencoba setiap kemungkinan pergeseran s dari 0 sampai 336
+        for (uint32_t s = 0; s < B; ++s) {
+            std::string attempt = "";
+            bool looks_valid = false;
+            int printable_count = 0;
+
+            for (uint32_t m : m_values) {
+                // Persamaan: (m - s) mod B
+                int32_t decoded = (int32_t)m - (int32_t)s;
+                while (decoded < 0) decoded += B;
+                decoded %= B;
+
+                if (decoded >= 32 && decoded <= 126) {
+                    attempt += (char)decoded;
+                    printable_count++;
+                } else {
+                    attempt += "?";
                 }
             }
-        }
 
-        std::cout << "Collected indices: " << m_values.size() << "\n";
-        std::cout << "Recovered Data: ";
-        for (uint8_t b : final_bytes) {
-            if (b >= 32 && b <= 126) std::cout << (char)b;
-            else std::cout << "[" << (int)b << "]";
+            // Jika lebih dari 60% karakter terbaca, tampilkan
+            if (printable_count > (m_values.size() * 0.6)) {
+                std::cout << "Shift [" << std::setw(3) << s << "]: " << attempt << "\n";
+            }
         }
         std::cout << "\n-------------------------------------------\n";
-
-        // Jika hasilnya masih kosong, kita coba ambil bit m dari baris 0
-        std::cout << "Alternative (Bit m of Row 0): ";
-        current_byte = 0; bit_count = 0;
-        for (uint32_t m : m_values) {
-            size_t word_idx = m / 64;
-            size_t bit_idx = m % 64;
-            if (word_idx < pk.H[0].w.size()) {
-                bool bit = (pk.H[0].w[word_idx] >> bit_idx) & 1;
-                if (bit) current_byte |= (1 << bit_count);
-                bit_count++;
-                if (bit_count == 8) {
-                    std::cout << (char)((current_byte >= 32 && current_byte <= 126) ? current_byte : '.');
-                    current_byte = 0; bit_count = 0;
-                }
-            }
-        }
-        std::cout << "\n";
 
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
