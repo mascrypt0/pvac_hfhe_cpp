@@ -87,47 +87,37 @@ int main(int argc, char** argv) {
         auto cts = loadCts(ct_path);
         uint32_t B = 337; 
 
-        std::vector<uint32_t> m_values;
+        std::cout << "--- BOUNTY V3: NONCE-XOR EXTRACTION ---\n\n";
+
+        std::string final_msg = "";
+
+        for (size_t i = 0; i < cts.size(); ++i) {
+            for (const auto& L : cts[i].L) {
+                if (L.rule == RRule::BASE) {
+                    // Trik: XOR Ztag dengan Nonce sebelum Modulo
+                    // Seringkali Nonce LO atau HI bertindak sebagai 'mask'
+                    uint64_t val = (L.seed.ztag ^ L.seed.nonce.lo ^ L.seed.nonce.hi) % B;
+                    
+                    if (val >= 32 && val <= 126) final_msg += (char)val;
+                    else final_msg += "?";
+                }
+            }
+        }
+
+        std::cout << "Result (XOR All): " << final_msg << "\n";
+
+        // Coba Nonce LO saja
+        final_msg = "";
         for (const auto& ct : cts) {
             for (const auto& L : ct.L) {
-                if (L.rule == RRule::BASE) m_values.push_back(L.seed.ztag % B);
+                if (L.rule == RRule::BASE) {
+                    uint64_t val = (L.seed.ztag ^ L.seed.nonce.lo) % B;
+                    if (val >= 32 && val <= 126) final_msg += (char)val;
+                    else final_msg += "?";
+                }
             }
         }
-
-        std::cout << "--- BOUNTY V3: RECOVERY ATTEMPT ---\n";
-        std::cout << "Raw M: ";
-        for(auto v : m_values) std::cout << v << " ";
-        std::cout << "\n\n";
-
-        // Strategi 1: Modulo langsung ke ASCII
-        std::cout << "M % 256: ";
-        for(auto v : m_values) {
-            char c = (char)(v % 256);
-            std::cout << ((c >= 32 && c <= 126) ? c : '.');
-        }
-        std::cout << "\n";
-
-        // Strategi 2: XOR M dengan nilai berikutnya (Delta decoding)
-        std::cout << "M XOR Next: ";
-        for(size_t i=0; i < m_values.size()-1; ++i) {
-            char c = (char)(m_values[i] ^ m_values[i+1]);
-            std::cout << ((c >= 32 && c <= 126) ? c : '.');
-        }
-        std::cout << "\n";
-
-        // Strategi 3: Brute Force Shift (Hanya yang paling masuk akal)
-        for (int s = 0; s < 337; ++s) {
-            std::string res = "";
-            int score = 0;
-            for (auto v : m_values) {
-                int c = (v - s + 337) % 337;
-                if (c >= 32 && c <= 126) { res += (char)c; score++; }
-                else res += ".";
-            }
-            if (score >= 7) { // Jika 70% karakter valid
-                std::cout << "Shift [" << s << "]: " << res << "\n";
-            }
-        }
+        std::cout << "Result (XOR Lo) : " << final_msg << "\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
