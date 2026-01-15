@@ -119,37 +119,42 @@ int main(int argc, char** argv) {
         auto pk = loadPk(pk_path);
         uint32_t B = pk.prm.B;
 
-        std::cout << "--- BOUNTY V3: ADVANCED EXTRACTION ---\n";
+        std::cout << "--- BOUNTY V3: PK-MATRIX EXTRACTION ---\n";
         
-        std::string method1 = "";
-        std::string method2 = "";
+        std::vector<uint32_t> m_values;
+        for (const auto& ct : cts) {
+            for (const auto& L : ct.L) {
+                if (L.rule == RRule::BASE) m_values.push_back(L.seed.ztag % B);
+            }
+        }
 
-        for (size_t i = 0; i < cts.size(); ++i) {
-            for (const auto& L : cts[i].L) {
-                if (L.rule == RRule::BASE) {
-                    uint64_t m = L.seed.ztag % B;
-                    
-                    // Metode 1: Modulo murni (ASCII)
-                    method1 += (m >= 32 && m <= 126) ? (char)m : '.';
+        std::cout << "Collecting bits from PK.H using M as index...\n";
+        std::vector<uint8_t> final_bytes;
+        uint8_t current_byte = 0;
+        int bit_count = 0;
 
-                    // Metode 2: XOR antara m dengan B (Trik sering digunakan di Octra)
-                    uint64_t x = m ^ (B & 0xFF);
-                    method2 += (x >= 32 && x <= 126) ? (char)x : '.';
+        for (uint32_t m : m_values) {
+            // Kita ambil bit ke-m dari baris pertama matriks H
+            // atau menggunakan m untuk memilih baris.
+            if (m < pk.H.size()) {
+                bool bit = pk.H[m].get(0); // Ambil bit pertama dari baris ke-m
+                if (bit) current_byte |= (1 << bit_count);
+                
+                bit_count++;
+                if (bit_count == 8) {
+                    final_bytes.push_back(current_byte);
+                    current_byte = 0;
+                    bit_count = 0;
                 }
             }
         }
 
-        std::cout << "Method 1 (Modulo): " << method1 << "\n";
-        std::cout << "Method 2 (XOR B) : " << method2 << "\n";
-        
-        std::cout << "\nRaw M values (for Manual Look-up):\n";
-        for (size_t i = 0; i < cts.size(); ++i) {
-            std::cout << "CT[" << i << "]: ";
-            for (const auto& L : cts[i].L) {
-                if (L.rule == RRule::BASE) std::cout << (L.seed.ztag % B) << " ";
-            }
-            std::cout << "\n";
+        std::cout << "Recovered Data: ";
+        for (uint8_t b : final_bytes) {
+            if (b >= 32 && b <= 126) std::cout << (char)b;
+            else std::cout << "[" << (int)b << "]";
         }
+        std::cout << "\n---------------------------------------\n";
 
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
