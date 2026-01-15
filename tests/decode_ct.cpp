@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
         auto pk = loadPk(pk_path);
         uint32_t B = pk.prm.B;
 
-        std::cout << "--- BOUNTY V3: PK-MATRIX EXTRACTION ---\n";
+        std::cout << "--- BOUNTY V3: PK-MATRIX BIT EXTRACTION ---\n";
         
         std::vector<uint32_t> m_values;
         for (const auto& ct : cts) {
@@ -128,16 +128,16 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::cout << "Collecting bits from PK.H using M as index...\n";
         std::vector<uint8_t> final_bytes;
         uint8_t current_byte = 0;
         int bit_count = 0;
 
         for (uint32_t m : m_values) {
-            // Kita ambil bit ke-m dari baris pertama matriks H
-            // atau menggunakan m untuk memilih baris.
             if (m < pk.H.size()) {
-                bool bit = pk.H[m].get(0); // Ambil bit pertama dari baris ke-m
+                // Akses manual bit ke-0 dari BitVec baris ke-m
+                // BitVec biasanya menyimpan bit dalam array 'w' (uint64_t)
+                bool bit = (pk.H[m].w[0] & 1); 
+                
                 if (bit) current_byte |= (1 << bit_count);
                 
                 bit_count++;
@@ -149,12 +149,31 @@ int main(int argc, char** argv) {
             }
         }
 
+        std::cout << "Collected indices: " << m_values.size() << "\n";
         std::cout << "Recovered Data: ";
         for (uint8_t b : final_bytes) {
             if (b >= 32 && b <= 126) std::cout << (char)b;
             else std::cout << "[" << (int)b << "]";
         }
-        std::cout << "\n---------------------------------------\n";
+        std::cout << "\n-------------------------------------------\n";
+
+        // Jika hasilnya masih kosong, kita coba ambil bit m dari baris 0
+        std::cout << "Alternative (Bit m of Row 0): ";
+        current_byte = 0; bit_count = 0;
+        for (uint32_t m : m_values) {
+            size_t word_idx = m / 64;
+            size_t bit_idx = m % 64;
+            if (word_idx < pk.H[0].w.size()) {
+                bool bit = (pk.H[0].w[word_idx] >> bit_idx) & 1;
+                if (bit) current_byte |= (1 << bit_count);
+                bit_count++;
+                if (bit_count == 8) {
+                    std::cout << (char)((current_byte >= 32 && current_byte <= 126) ? current_byte : '.');
+                    current_byte = 0; bit_count = 0;
+                }
+            }
+        }
+        std::cout << "\n";
 
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
