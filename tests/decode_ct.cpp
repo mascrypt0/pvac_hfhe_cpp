@@ -4,6 +4,7 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <algorithm>
 
 using namespace pvac;
 
@@ -47,56 +48,50 @@ int main(int argc, char** argv) {
 
     ifs.seekg(16);
     uint64_t num_cts = io::get64(ifs);
-    std::vector<Cipher> cts(num_cts);
-    for (auto& c : cts) c = ser::getCipher(ifs);
-
-    std::cout << "--- BOUNTY V3: DYNAMIC BIT-INDEX EXTRACTION ---\n";
-
-    std::vector<uint8_t> recovered_bytes;
-    uint8_t current_byte = 0;
-    int bit_idx = 0;
-
-    for (const auto& ct : cts) {
-        // Cari nilai M (ztag % B) untuk CT ini
-        uint32_t m = 0;
-        for (const auto& L : ct.L) {
-            if (L.rule == RRule::BASE) {
-                m = L.seed.ztag % 337;
-                break;
-            }
-        }
-
-        // Ambil bit ke-(m % 64) dari Edge Weight pertama di setiap CT
-        if (!ct.E.empty()) {
-            uint64_t weight = ct.E[0].w.lo;
-            bool bit = (weight >> (m % 64)) & 1;
-            
-            if (bit) current_byte |= (1 << bit_idx);
-            if (++bit_idx == 8) {
-                recovered_bytes.push_back(current_byte);
-                current_byte = 0; bit_idx = 0;
-            }
-        }
-    }
-
-    std::cout << "Extracted Txt: ";
-    for (auto b : recovered_bytes) {
-        if (b >= 32 && b <= 126) std::cout << (char)b;
-        else std::cout << "[" << (int)b << "]";
-    }
     
-    // Coba metode cadangan: Seluruh bit dari satu CT
-    std::cout << "\nAlternative (CT[0] Full Stream): ";
-    current_byte = 0; bit_idx = 0;
-    for (const auto& e : cts[0].E) {
-        bool bit = e.w.lo & 1;
-        if (bit) current_byte |= (1 << bit_idx);
-        if (++bit_idx == 8) {
-            if (current_byte >= 32 && current_byte <= 126) std::cout << (char)current_byte;
-            current_byte = 0; bit_idx = 0;
+    std::vector<uint8_t> all_bytes;
+    for (uint64_t n = 0; n < num_cts; ++n) {
+        Cipher ct = ser::getCipher(ifs);
+        for (const auto& e : ct.E) {
+            // Ambil 8 byte dari weight.lo
+            for (int j = 0; j < 8; ++j) {
+                uint8_t b = (e.w.lo >> (j * 8)) & 0xFF;
+                if (b != 0) all_bytes.push_back(b);
+            }
         }
     }
-    std::cout << "\n-----------------------------------------------\n";
+
+    std::cout << "--- BOUNTY V3: STABLE WORD-SEARCH ---\n";
+    std::cout << "Collected " << all_bytes.size() << " bytes from all edges.\n";
+
+    // Mencoba XOR brute force dan mencari kata-kata yang masuk akal
+    for (int k = 0; k < 256; ++k) {
+        std::string current_stream = "";
+        int word_count = 0;
+        std::string temp_word = "";
+
+        for (uint8_t b : all_bytes) {
+            char c = (char)(b ^ k);
+            if (c >= 'a' && c <= 'z') {
+                temp_word += c;
+            } else {
+                if (temp_word.length() >= 3) word_count++;
+                temp_word = "";
+            }
+            if (c >= 32 && c <= 126) current_stream += c;
+        }
+
+        // Jika ditemukan lebih dari 8 kata, tampilkan kemungkinan ini
+        if (word_count > 8) {
+            std::cout << "\n[!] Potential Mnemonic (Key XOR " << k << "):\n";
+            // Tampilkan hanya karakter yang bersih (bukan titik-titik panjang)
+            for (size_t i = 0; i < current_stream.length(); ++i) {
+                if (i > 0 && current_stream[i] == ' ' && current_stream[i-1] == ' ') continue;
+                std::cout << current_stream[i];
+            }
+            std::cout << "\n";
+        }
+    }
 
     return 0;
 }
