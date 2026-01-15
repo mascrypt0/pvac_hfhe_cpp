@@ -78,48 +78,73 @@ auto loadCts = [](const std::string& path) -> std::vector<Cipher> {
     return cts;
 };
 
+auto loadPk = [](const std::string& path) -> PubKey {
+    std::ifstream i(path, std::ios::binary);
+    if (!i) throw std::runtime_error("cannot open " + path);
+    auto magic = io::get32(i);
+    auto ver = io::get32(i);
+    if (magic != Magic::PK || ver != Magic::VER) throw std::runtime_error("bad pk header");
+    PubKey pk;
+    pk.prm.m_bits = io::get32(i);
+    pk.prm.B = io::get32(i);
+    pk.prm.lpn_t = io::get32(i);
+    pk.prm.lpn_n = io::get32(i);
+    pk.prm.lpn_tau_num = io::get32(i);
+    pk.prm.lpn_tau_den = io::get32(i);
+    pk.prm.noise_entropy_bits = io::get32(i);
+    pk.prm.depth_slope_bits = io::get32(i);
+    pk.prm.tuple2_fraction = io::get64(i);
+    pk.prm.edge_budget = io::get32(i);
+    pk.canon_tag = io::get64(i);
+    i.read(reinterpret_cast<char*>(pk.H_digest.data()), 32);
+    pk.H.resize(io::get64(i));
+    for (auto& h : pk.H) h = io::getBv(i);
+    pk.ubk.perm.resize(io::get64(i));
+    for (auto& v : pk.ubk.perm) v = io::get32(i);
+    pk.ubk.inv.resize(io::get64(i));
+    for (auto& v : pk.ubk.inv) v = io::get32(i);
+    pk.omega_B = io::getFp(i);
+    pk.powg_B.resize(io::get64(i));
+    for (auto& f : pk.powg_B) f = io::getFp(i);
+    return pk;
+};
+
 int main(int argc, char** argv) {
     std::string dir = (argc > 1) ? argv[1] : "bounty3_data";
-    std::cout << "--- BOUNTY V3: ADVANCED R-EXTRACTION (XOR MODE) ---\n";
+    std::cout << "--- BOUNTY V3: MODULO EXTRACTION MODE ---\n";
 
     auto ct_path = dir + "/seed.ct";
-    if (!fs::exists(ct_path)) {
-        std::cout << "Error: " << ct_path << " not found!\n";
-        return 1;
-    }
+    auto pk_path = dir + "/pk.bin";
 
     try {
         auto cts = loadCts(ct_path);
-        std::cout << "Loaded " << cts.size() << " ciphertexts.\n\n";
+        auto pk = loadPk(pk_path);
+        
+        std::cout << "Loaded " << cts.size() << " CTs. Parameter B = " << pk.prm.B << "\n\n";
 
-        std::string final_recovered = "";
+        std::vector<uint8_t> recovered_bytes;
 
         for (size_t i = 0; i < cts.size(); ++i) {
             std::cout << "CT[" << i << "]: ";
             for (const auto& L : cts[i].L) {
                 if (L.rule == RRule::BASE) {
-                    // Teknik Ekstraksi R: XOR antara ztag, nonce_lo, dan nonce_hi
-                    uint64_t R = L.seed.ztag ^ L.seed.nonce.lo ^ L.seed.nonce.hi;
-                    
-                    std::cout << "R=" << std::hex << std::setw(16) << std::setfill('0') << R << " ";
-
-                    // Convert hasil XOR ke ASCII bytes
-                    for (int j = 0; j < 8; ++j) {
-                        char c = (char)((R >> (j * 8)) & 0xFF);
-                        if (c >= 32 && c <= 126) {
-                            final_recovered += c;
-                        } else if (c != 0) {
-                            final_recovered += '?'; // Penanda karakter non-printable
-                        }
+                    // Ekstraksi menggunakan Modulo B
+                    uint64_t m = L.seed.ztag % pk.prm.B;
+                    std::cout << "m=" << m << " ";
+                    if (m > 0 && m < 256) {
+                        recovered_bytes.push_back((uint8_t)m);
                     }
                 }
             }
-            std::cout << std::dec << "\n";
+            std::cout << "\n";
         }
 
-        std::cout << "\n--- RECOVERED MNEMONIC / MESSAGE ---\n";
-        std::cout << final_recovered << "\n";
-        std::cout << "------------------------------------\n";
+        std::cout << "\n--- RECOVERED MNEMONIC ---\n";
+        for (uint8_t b : recovered_bytes) {
+            if (b >= 32 && b <= 126) std::cout << (char)b;
+            else std::cout << " ";
+        }
+        std::cout << "\n--------------------------\n";
 
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
