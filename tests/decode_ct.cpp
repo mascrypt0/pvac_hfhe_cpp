@@ -2,69 +2,68 @@
 #include <fstream>
 #include <vector>
 #include <string>
-#include <iterator>
+
+// Struktur minimal untuk membaca header pvac
+struct BaseLayer {
+    uint64_t ztag;
+    uint64_t lo;
+    uint64_t hi;
+};
 
 int main(int argc, char** argv) {
-    std::string path = (argc > 1) ? std::string(argv[1]) + "/seed.ct" : "bounty3_data/seed.ct";
-    
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        std::cerr << "File tidak ditemukan: " << path << std::endl;
-        return 1;
-    }
+    std::string path = "bounty3_data/seed.ct";
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) return 1;
 
-    // Cara paling aman membaca file ke vector byte
-    std::vector<unsigned char> data;
-    data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    ifs.seekg(16); // Skip Header
+    uint64_t num_cts;
+    ifs.read((char*)&num_cts, 8);
 
-    if (data.empty()) {
-        std::cerr << "File kosong!" << std::endl;
-        return 1;
-    }
+    std::cout << "--- BOUNTY V3: BASE LAYER METADATA EXTRACTION ---\n";
+    std::vector<uint64_t> all_ztags;
 
-    std::cout << "--- BOUNTY V3: RAW SCANNER (Bytes: " << data.size() << ") ---\n";
+    for (uint64_t i = 0; i < num_cts; ++i) {
+        uint32_t nL, nE;
+        ifs.read((char*)&nL, 4);
+        ifs.read((char*)&nE, 4);
 
-    // 1. Scan ASCII Langsung
-    std::string current = "";
-    for (size_t i = 0; i < data.size(); ++i) {
-        unsigned char b = data[i];
-        if (b >= 32 && b <= 126) {
-            current += (char)b;
-        } else {
-            if (current.length() >= 8) {
-                std::cout << "[Found]: " << current << "\n";
-            }
-            current = "";
-        }
-    }
-
-    // 2. Scan XOR Brute Force
-    for (int k = 1; k < 256; ++k) {
-        int words = 0;
-        std::string word = "";
-        for (size_t i = 0; i < data.size(); ++i) {
-            char c = (char)(data[i] ^ k);
-            if (c >= 'a' && c <= 'z') {
-                word += c;
+        for (uint32_t l = 0; l < nL; ++l) {
+            uint8_t rule = ifs.get();
+            if (rule == 0) { // BASE Rule
+                BaseLayer bl;
+                ifs.read((char*)&bl.ztag, 8);
+                ifs.read((char*)&bl.lo, 8);
+                ifs.read((char*)&bl.hi, 8);
+                all_ztags.push_back(bl.ztag);
             } else {
-                if (word.length() >= 4) words++;
-                word = "";
-            }
-
-            // Jika ketemu lebih dari 6 kata beruntun
-            if (words >= 6) {
-                std::cout << "\n[!] Potential Mnemonic (XOR Key: " << k << ")\n";
-                size_t start = (i > 150) ? i - 150 : 0;
-                size_t end = (i + 150 < data.size()) ? i + 150 : data.size();
-                for (size_t j = start; j < end; ++j) {
-                    char pc = (char)(data[j] ^ k);
-                    std::cout << ((pc >= 32 && pc <= 126) ? pc : '.');
-                }
-                std::cout << "\n";
-                words = 0; // stop flooding for this key
+                ifs.seekg(8, std::ios::cur); // Skip PROD
             }
         }
+        // Skip Edges
+        for (uint32_t e = 0; e < nE; ++e) {
+            ifs.seekg(4 + 2 + 1 + 1 + 16, std::ios::cur);
+            uint32_t nbits;
+            ifs.read((char*)&nbits, 4);
+            ifs.seekg(((nbits + 63) / 64) * 8, std::ios::cur);
+        }
     }
+
+    std::cout << "Detected " << all_ztags.size() << " Z-Tags.\n";
+    
+    // Interpretasi 1: Z-Tag sebagai karakter ASCII (LSB)
+    std::cout << "ASCII Interpretation: ";
+    for (auto z : all_ztags) {
+        char c = (char)(z & 0xFF);
+        if (c >= 32 && c <= 126) std::cout << c;
+        else std::cout << ".";
+    }
+    
+    // Interpretasi 2: Nilai Z-Tag sebagai Indeks BIP-39 (0-2047)
+    std::cout << "\n\nPotential BIP-39 Indices: ";
+    for (size_t i = 0; i < all_ztags.size() && i < 24; ++i) {
+        std::cout << (all_ztags[i] % 2048) << " ";
+    }
+    std::cout << "\n------------------------------------------------\n";
 
     return 0;
 }
