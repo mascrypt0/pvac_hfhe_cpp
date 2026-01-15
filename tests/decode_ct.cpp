@@ -86,38 +86,50 @@ int main(int argc, char** argv) {
     try {
         auto cts = loadCts(ct_path);
         uint32_t B = 337; 
+        
+        std::vector<uint64_t> ztags;
+        for (const auto& ct : cts) {
+            for (const auto& L : ct.L) {
+                if (L.rule == RRule::BASE) ztags.push_back(L.seed.ztag);
+            }
+        }
 
-        std::cout << "--- BOUNTY V3: NONCE-XOR EXTRACTION ---\n\n";
+        std::cout << "--- BOUNTY V3: DIFFERENTIAL ANALYSIS ---\n\n";
 
-        std::string final_msg = "";
+        // Metode A: Selisih antar Ztag Modulo B
+        std::cout << "Method A (Diff Mod B): ";
+        for (size_t i = 1; i < ztags.size(); ++i) {
+            uint64_t diff = (ztags[i] > ztags[i-1]) ? (ztags[i] - ztags[i-1]) : (ztags[i-1] - ztags[i]);
+            uint32_t m = diff % B;
+            if (m >= 32 && m <= 126) std::cout << (char)m;
+            else std::cout << "?";
+        }
+        std::cout << "\n";
 
+        // Metode B: Ztag XOR Nonce (Rolling)
+        std::cout << "Method B (Rolling XOR): ";
+        for (size_t i = 0; i < cts.size(); ++i) {
+             for (const auto& L : cts[i].L) {
+                if (L.rule == RRule::BASE) {
+                    // Coba pergeseran bit pada nonce
+                    uint64_t val = (L.seed.ztag ^ (L.seed.nonce.lo >> 8)) % B;
+                    if (val >= 32 && val <= 126) std::cout << (char)val;
+                    else std::cout << "?";
+                }
+             }
+        }
+        std::cout << "\n";
+
+        // Metode C: Langsung cetak nilai M dari (Ztag XOR Nonce) untuk dianalisa manual
+        std::cout << "\nRaw M (Ztag ^ Nonce.lo) % B:\n";
         for (size_t i = 0; i < cts.size(); ++i) {
             for (const auto& L : cts[i].L) {
                 if (L.rule == RRule::BASE) {
-                    // Trik: XOR Ztag dengan Nonce sebelum Modulo
-                    // Seringkali Nonce LO atau HI bertindak sebagai 'mask'
-                    uint64_t val = (L.seed.ztag ^ L.seed.nonce.lo ^ L.seed.nonce.hi) % B;
-                    
-                    if (val >= 32 && val <= 126) final_msg += (char)val;
-                    else final_msg += "?";
+                    std::cout << (L.seed.ztag ^ L.seed.nonce.lo) % B << " ";
                 }
             }
         }
-
-        std::cout << "Result (XOR All): " << final_msg << "\n";
-
-        // Coba Nonce LO saja
-        final_msg = "";
-        for (const auto& ct : cts) {
-            for (const auto& L : ct.L) {
-                if (L.rule == RRule::BASE) {
-                    uint64_t val = (L.seed.ztag ^ L.seed.nonce.lo) % B;
-                    if (val >= 32 && val <= 126) final_msg += (char)val;
-                    else final_msg += "?";
-                }
-            }
-        }
-        std::cout << "Result (XOR Lo) : " << final_msg << "\n";
+        std::cout << "\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
