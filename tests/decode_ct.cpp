@@ -49,12 +49,21 @@ namespace ser {
         }
         return L;
     };
+    auto getEdge = [](std::istream& i) -> Edge {
+        Edge e{};
+        e.layer_id = get32(i);
+        i.read(reinterpret_cast<char*>(&e.idx), 2);
+        e.ch = i.get(); i.get();
+        e.w = getFp(i); e.s = getBv(i);
+        return e;
+    };
     auto getCipher = [](std::istream& i) -> Cipher {
         Cipher C;
         auto nL = get32(i), nE = get32(i);
-        C.L.resize(nL); C.E.resize(nE);
+        C.L.resize(nL);
+        C.E.resize(nE);
         for (auto& L : C.L) L = getLayer(i);
-        i.seekg(nE * (4 + 2 + 1 + 1 + 16 + 8), std::ios::cur); // Skip edges for speed
+        for (auto& e : C.E) e = getEdge(i);
         return C;
     };
 }
@@ -76,7 +85,7 @@ int main(int argc, char** argv) {
     
     try {
         auto cts = loadCts(ct_path);
-        uint32_t B = 337; // Parameter pk.B dari hasil sebelumnya
+        uint32_t B = 337; 
 
         std::vector<uint32_t> m_values;
         for (const auto& ct : cts) {
@@ -85,39 +94,43 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::cout << "--- BOUNTY V3: MODULO SHIFT BRUTEFORCE ---\n";
-        std::cout << "Target: Find a shift 's' where (m - s) % B is ASCII.\n\n";
+        std::cout << "--- BOUNTY V3: RECOVERY ATTEMPT ---\n";
+        std::cout << "Raw M: ";
+        for(auto v : m_values) std::cout << v << " ";
+        std::cout << "\n\n";
 
-        // Mencoba setiap kemungkinan pergeseran s dari 0 sampai 336
-        for (uint32_t s = 0; s < B; ++s) {
-            std::string attempt = "";
-            bool looks_valid = false;
-            int printable_count = 0;
+        // Strategi 1: Modulo langsung ke ASCII
+        std::cout << "M % 256: ";
+        for(auto v : m_values) {
+            char c = (char)(v % 256);
+            std::cout << ((c >= 32 && c <= 126) ? c : '.');
+        }
+        std::cout << "\n";
 
-            for (uint32_t m : m_values) {
-                // Persamaan: (m - s) mod B
-                int32_t decoded = (int32_t)m - (int32_t)s;
-                while (decoded < 0) decoded += B;
-                decoded %= B;
+        // Strategi 2: XOR M dengan nilai berikutnya (Delta decoding)
+        std::cout << "M XOR Next: ";
+        for(size_t i=0; i < m_values.size()-1; ++i) {
+            char c = (char)(m_values[i] ^ m_values[i+1]);
+            std::cout << ((c >= 32 && c <= 126) ? c : '.');
+        }
+        std::cout << "\n";
 
-                if (decoded >= 32 && decoded <= 126) {
-                    attempt += (char)decoded;
-                    printable_count++;
-                } else {
-                    attempt += "?";
-                }
+        // Strategi 3: Brute Force Shift (Hanya yang paling masuk akal)
+        for (int s = 0; s < 337; ++s) {
+            std::string res = "";
+            int score = 0;
+            for (auto v : m_values) {
+                int c = (v - s + 337) % 337;
+                if (c >= 32 && c <= 126) { res += (char)c; score++; }
+                else res += ".";
             }
-
-            // Jika lebih dari 60% karakter terbaca, tampilkan
-            if (printable_count > (m_values.size() * 0.6)) {
-                std::cout << "Shift [" << std::setw(3) << s << "]: " << attempt << "\n";
+            if (score >= 7) { // Jika 70% karakter valid
+                std::cout << "Shift [" << s << "]: " << res << "\n";
             }
         }
-        std::cout << "\n-------------------------------------------\n";
 
     } catch (const std::exception& e) {
-        std::cout << "Error: " << e.what() << "\n";
+        std::cerr << "Error: " << e.what() << "\n";
     }
-
     return 0;
 }
