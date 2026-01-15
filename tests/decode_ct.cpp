@@ -1,11 +1,9 @@
 #include <pvac/pvac.hpp>
-#include <pvac/utils/text.hpp>
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <algorithm>
 #include <iomanip>
 
 using namespace pvac;
@@ -48,52 +46,57 @@ int main(int argc, char** argv) {
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) return 1;
 
-    ifs.seekg(16); // Skip Header
-    std::vector<Cipher> cts(io::get64(ifs));
+    ifs.seekg(16);
+    uint64_t num_cts = io::get64(ifs);
+    std::vector<Cipher> cts(num_cts);
     for (auto& c : cts) c = ser::getCipher(ifs);
 
-    std::vector<uint8_t> data;
+    std::cout << "--- BOUNTY V3: DEEP BIT-STREAM ANALYSIS ---\n";
+
+    // Teknik 1: Ambil bit ke-0 dari setiap selector (Edge.s)
+    std::vector<uint8_t> bit_stream;
+    uint8_t current_byte = 0;
+    int bits = 0;
+
     for (auto& ct : cts) {
         for (auto& e : ct.E) {
-            // Kita ambil byte dari lo dan hi secara berurutan
-            for(int i=0; i<8; ++i) data.push_back((e.w.lo >> (i*8)) & 0xFF);
-            for(int i=0; i<8; ++i) data.push_back((e.w.hi >> (i*8)) & 0xFF);
+            bool b = (e.s.w[0] & 1);
+            if (b) current_byte |= (1 << bits);
+            if (++bits == 8) {
+                bit_stream.push_back(current_byte);
+                current_byte = 0; bits = 0;
+            }
         }
     }
 
-    std::cout << "--- BOUNTY V3: MNEMONIC RECOVERY ---\n";
-    
-    // Brute force XOR dengan filter kata mnemonic umum (BIP-39)
-    // Kita cari string yang mengandung spasi dan karakter huruf kecil
+    std::cout << "Attempt 1 (Selector Bit 0): ";
+    for (auto b : bit_stream) {
+        if (b >= 32 && b <= 126) std::cout << (char)b;
+        else if (b != 0) std::cout << "?";
+    }
+    std::cout << "\n";
+
+    // Teknik 2: Ambil byte pertama dari setiap Edge.w.lo (XOR Scan)
+    std::cout << "\nAttempt 2 (Edge Weight XOR Scan):\n";
+    std::vector<uint8_t> w_bytes;
+    for (auto& ct : cts) {
+        for (auto& e : ct.E) {
+            if (e.w.lo != 0) w_bytes.push_back(e.w.lo & 0xFF);
+        }
+    }
+
     for (int k = 0; k < 256; ++k) {
-        std::string s = "";
-        int word_count = 0;
-        std::string current_word = "";
-
-        for (auto b : data) {
-            char c = (char)(b ^ k);
-            if (c >= 'a' && c <= 'z') {
-                current_word += c;
-            } else if (c == ' ') {
-                if (current_word.length() >= 3) word_count++;
-                current_word = "";
-            }
-            if (c >= 32 && c <= 126) s += c;
-            else s += '.';
+        std::string res = "";
+        int letters = 0;
+        for (size_t i = 0; i < w_bytes.size() && i < 50; ++i) {
+            char c = (char)(w_bytes[i] ^ k);
+            if (c >= 'a' && c <= 'z') letters++;
+            res += (c >= 32 && c <= 126) ? c : '.';
         }
-
-        // Mnemonic biasanya punya minimal 12 kata
-        if (word_count >= 10) {
-            std::cout << "\n[!] Potential Mnemonic Found (Key: " << k << ")\n";
-            // Bersihkan titik-titik berlebih untuk pembacaan
-            std::string cleaned = "";
-            for(size_t i=0; i<s.length(); ++i) {
-                if (s[i] == '.' && (i>0 && s[i-1] == '.')) continue;
-                cleaned += s[i];
-            }
-            std::cout << cleaned << "\n";
+        if (letters > 15) { // Threshold untuk kata bahasa Inggris
+            std::cout << "Key [" << k << "]: " << res << "...\n";
         }
     }
-    
+
     return 0;
 }
