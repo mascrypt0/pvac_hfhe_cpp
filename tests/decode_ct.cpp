@@ -4,7 +4,6 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <iomanip>
 
 using namespace pvac;
 
@@ -51,52 +50,53 @@ int main(int argc, char** argv) {
     std::vector<Cipher> cts(num_cts);
     for (auto& c : cts) c = ser::getCipher(ifs);
 
-    std::cout << "--- BOUNTY V3: DEEP BIT-STREAM ANALYSIS ---\n";
+    std::cout << "--- BOUNTY V3: DYNAMIC BIT-INDEX EXTRACTION ---\n";
 
-    // Teknik 1: Ambil bit ke-0 dari setiap selector (Edge.s)
-    std::vector<uint8_t> bit_stream;
+    std::vector<uint8_t> recovered_bytes;
     uint8_t current_byte = 0;
-    int bits = 0;
+    int bit_idx = 0;
 
-    for (auto& ct : cts) {
-        for (auto& e : ct.E) {
-            bool b = (e.s.w[0] & 1);
-            if (b) current_byte |= (1 << bits);
-            if (++bits == 8) {
-                bit_stream.push_back(current_byte);
-                current_byte = 0; bits = 0;
+    for (const auto& ct : cts) {
+        // Cari nilai M (ztag % B) untuk CT ini
+        uint32_t m = 0;
+        for (const auto& L : ct.L) {
+            if (L.rule == RRule::BASE) {
+                m = L.seed.ztag % 337;
+                break;
+            }
+        }
+
+        // Ambil bit ke-(m % 64) dari Edge Weight pertama di setiap CT
+        if (!ct.E.empty()) {
+            uint64_t weight = ct.E[0].w.lo;
+            bool bit = (weight >> (m % 64)) & 1;
+            
+            if (bit) current_byte |= (1 << bit_idx);
+            if (++bit_idx == 8) {
+                recovered_bytes.push_back(current_byte);
+                current_byte = 0; bit_idx = 0;
             }
         }
     }
 
-    std::cout << "Attempt 1 (Selector Bit 0): ";
-    for (auto b : bit_stream) {
+    std::cout << "Extracted Txt: ";
+    for (auto b : recovered_bytes) {
         if (b >= 32 && b <= 126) std::cout << (char)b;
-        else if (b != 0) std::cout << "?";
+        else std::cout << "[" << (int)b << "]";
     }
-    std::cout << "\n";
-
-    // Teknik 2: Ambil byte pertama dari setiap Edge.w.lo (XOR Scan)
-    std::cout << "\nAttempt 2 (Edge Weight XOR Scan):\n";
-    std::vector<uint8_t> w_bytes;
-    for (auto& ct : cts) {
-        for (auto& e : ct.E) {
-            if (e.w.lo != 0) w_bytes.push_back(e.w.lo & 0xFF);
+    
+    // Coba metode cadangan: Seluruh bit dari satu CT
+    std::cout << "\nAlternative (CT[0] Full Stream): ";
+    current_byte = 0; bit_idx = 0;
+    for (const auto& e : cts[0].E) {
+        bool bit = e.w.lo & 1;
+        if (bit) current_byte |= (1 << bit_idx);
+        if (++bit_idx == 8) {
+            if (current_byte >= 32 && current_byte <= 126) std::cout << (char)current_byte;
+            current_byte = 0; bit_idx = 0;
         }
     }
-
-    for (int k = 0; k < 256; ++k) {
-        std::string res = "";
-        int letters = 0;
-        for (size_t i = 0; i < w_bytes.size() && i < 50; ++i) {
-            char c = (char)(w_bytes[i] ^ k);
-            if (c >= 'a' && c <= 'z') letters++;
-            res += (c >= 32 && c <= 126) ? c : '.';
-        }
-        if (letters > 15) { // Threshold untuk kata bahasa Inggris
-            std::cout << "Key [" << k << "]: " << res << "...\n";
-        }
-    }
+    std::cout << "\n-----------------------------------------------\n";
 
     return 0;
 }
